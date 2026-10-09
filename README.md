@@ -140,7 +140,7 @@ Not here: the game, anything of an account, and the third-party source (`vendor/
 
 ## Building it yourself
 
-The release bundle is the supported way to install. Building from source works in the author's tree and has **not yet been reproduced from a fresh clone**, so expect to read the scripts:
+The release bundle is the supported way to install. In this fork a fresh build has been reproduced (Ubuntu 24.04 under WSL, clang 18, Meson 1.9, LLVM 19 for Mesa's host tool) with `tools/build-all.sh`, which runs the steps below in order and fixes what a fresh tree needed; see its header for `MESON` and `LLVM_CONFIG`. The original steps:
 
 ```sh
 python3 tools/bootstrap.py                 # pinned sources and host packages into vendor/ and .deps/

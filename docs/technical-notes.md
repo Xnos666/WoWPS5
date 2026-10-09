@@ -221,3 +221,10 @@ State: started and played on the console after the change, not yet confirmed by 
 The client starts `BlizzardError.exe` at every start, as a watchdog. Ending the title when that program starts was tried, to turn a crash into an exit, and ended every start.
 
 `klog-record.py` connects again after three silent minutes: a console that was restarted leaves the old connection open and silent for good.
+
+## This fork: runtime performance work (from October 9)
+
+Measured first (WoWPS5Bench, an add-on that records every frame's interval and the client's own tick time): Undercity's Trade Quarter on client 70291 with v0.1.1 runs at 31 to 33 frames a second whether the 3D is drawn at 50%, 75% or 100% of 3840x2160, capped or not. The GPU is not what the city waits for; add-ons take 0.23 ms of a 30 ms frame, and the driver's submissions under 2% of one processor. The frame is bound on the processors: the client, the translation to Vulkan, or how Wine and the console schedule its threads.
+
+- **A fresh build.** `tools/build-all.sh`. Two scripts assumed a tree that had been built before: `build-tls.sh` built GnuTLS's `lib/` without its gnulib (`gl/`, which generates the `byteswap.h` the SDK's libc lacks), and `build-native-server.sh` ended silently under `pipefail` when no ntdll object existed yet. Mesa needs Meson 1.4, and its host tool `mesa_clc` has to be built against the LLVM that libclc and the SPIR-V translator belong to.
+- **Thread priorities (`WOWPS5_PRIORITIES=1`, off by default).** Wine applies NT priorities only on Linux and macOS; here `apply_thread_priority` is empty, so every thread of the client runs first-in-first-out at the title's priority 700 and a busy worker is never pre-empted by the thread a frame waits for. With the setting, a priority set through `NtSetInformationThread` becomes the console priority 700 - (NT priority - 8) x `WOWPS5_PRIORITY_STEP` (4), within 256..767, lower running first; `WOWPS5_PRIORITY_LOG=1` logs each change. Not yet measured on the console.
