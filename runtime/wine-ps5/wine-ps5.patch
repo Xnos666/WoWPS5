@@ -486,7 +486,7 @@ index 9dad6c3..e5b0ed4 100644
      {
          WARN( "Invalid thread flags %#x.\n", thread_flags );
 diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
-index fa9138d..61b1413 100644
+index fa9138d..5037166 100644
 --- a/dlls/ntdll/unix/server.c
 +++ b/dlls/ntdll/unix/server.c
 @@ -90,7 +90,9 @@ WINE_DECLARE_DEBUG_CHANNEL(syscall);
@@ -1034,6 +1034,21 @@ index fa9138d..61b1413 100644
      SERVER_START_REQ( init_thread )
      {
          req->unix_tid  = get_unix_tid();
+@@ -1798,6 +2177,14 @@ void server_init_thread( struct thread_data *data )
+     }
+     SERVER_END_REQ;
+     close( reply_pipe );
++#ifdef __PROSPERO__
++    {
++        THREAD_BASIC_INFORMATION info;
++        if (data->teb && !NtQueryInformationThread( NtCurrentThread(), ThreadBasicInformation, &info, sizeof(info), NULL ) &&
++            info.Priority != 8)
++            ps5_apply_thread_priority( pthread_self(), data->tid, info.Priority, "start" );
++    }
++#endif
+ 
+     if (data->teb)
+     {
 diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
 index f807caa..46fa464 100644
 --- a/dlls/ntdll/unix/signal_x86_64.c
@@ -1631,7 +1646,7 @@ index aaae9a2..8b3e1ab 100644
          {
              struct xsw_usage swap;
 diff --git a/dlls/ntdll/unix/thread.c b/dlls/ntdll/unix/thread.c
-index d5a5f57..347db89 100644
+index d5a5f57..d56e1a4 100644
 --- a/dlls/ntdll/unix/thread.c
 +++ b/dlls/ntdll/unix/thread.c
 @@ -1116,6 +1116,9 @@ static void contexts_from_server( CONTEXT *context, struct context_data server_c
@@ -1654,8 +1669,104 @@ index d5a5f57..347db89 100644
      _exit( get_unix_exit_code( status ));
  }
  
+@@ -2476,6 +2482,75 @@ NTSTATUS WINAPI NtQueryInformationThread( HANDLE handle, THREADINFOCLASS class,
+ }
+ 
+ 
++#ifdef __PROSPERO__
++/* WOWPS5_PRIORITIES=1: a thread's NT priority becomes its console priority.
++ * Wine applies NT priorities only on Linux and macOS; on the console every
++ * thread of the program runs first-in-first-out at the title's one priority
++ * (700), so a busy worker is never pre-empted by the thread the frame waits
++ * for. The console runs lower numbers first (256 highest, 767 lowest): NT
++ * priority 8 (normal) keeps the title's priority, each NT step is
++ * WOWPS5_PRIORITY_STEP (default 4) away from it. */
++static int ps5_priority_mode = -1, ps5_priority_base = 700, ps5_priority_step = 4, ps5_priority_log;
++
++static BOOL ps5_priorities_enabled(void)
++{
++    if (ps5_priority_mode < 0)
++    {
++        const char *text = getenv( "WOWPS5_PRIORITIES" );
++        struct sched_param param;
++        int policy;
++
++        ps5_priority_log = getenv( "WOWPS5_PRIORITY_LOG" ) != NULL;
++        if ((text = getenv( "WOWPS5_PRIORITY_STEP" )) && atoi( text ) > 0 && atoi( text ) <= 32)
++            ps5_priority_step = atoi( text );
++        if (!pthread_getschedparam( pthread_self(), &policy, &param )) ps5_priority_base = param.sched_priority;
++        text = getenv( "WOWPS5_PRIORITIES" );
++        ps5_priority_mode = text && text[0] == '1';
++        if (ps5_priority_mode || ps5_priority_log)
++            fprintf( stderr, "[WoWPS5 Wine] priorities: %s; normal threads at %d, %d a step (policy %d)\n",
++                     ps5_priority_mode ? "applied" : "logged only", ps5_priority_base, ps5_priority_step, policy );
++    }
++    return ps5_priority_mode;
++}
++
++void ps5_apply_thread_priority( pthread_t thread, int tid, int nt_priority, const char *why )
++{
++    struct sched_param param;
++    int policy, before, error = -1, wanted;
++
++    if (ps5_priorities_enabled() < 0 || (!ps5_priority_mode && !ps5_priority_log) || !thread) return;
++    if (pthread_getschedparam( thread, &policy, &param )) return;
++    before = param.sched_priority;
++    wanted = ps5_priority_base - (nt_priority - 8) * ps5_priority_step;
++    if (wanted < 256) wanted = 256;
++    if (wanted > 767) wanted = 767;
++    if (ps5_priority_mode && wanted != before)
++    {
++        param.sched_priority = wanted;
++        error = pthread_setschedparam( thread, policy, &param );
++    }
++    if (ps5_priority_log)
++        fprintf( stderr, "[WoWPS5 Wine] priority %04x (%s): NT %d -> %d (was %d)%s\n", tid, why, nt_priority,
++                 ps5_priority_mode ? wanted : before, before, error > 0 ? " refused" : "" );
++}
++
++/* After a priority change through a handle: the thread's TEB is in this
++ * process, and with it its pthread. */
++static void ps5_priority_changed( HANDLE handle )
++{
++    THREAD_BASIC_INFORMATION info;
++    pthread_t thread;
++    TEB *teb;
++
++    if (!ps5_priorities_enabled() && !ps5_priority_log) return;
++    if (NtQueryInformationThread( handle, ThreadBasicInformation, &info, sizeof(info), NULL )) return;
++    if (!(teb = info.TebBaseAddress)) return;
++    thread = teb == NtCurrentTeb() ? pthread_self() : virtual_thread_pthread( teb );
++    /* a thread not yet running has no pthread id: it applies its own at start */
++    if (thread) ps5_apply_thread_priority( thread, (int)HandleToULong( info.ClientId.UniqueThread ), info.Priority, "set" );
++}
++#endif
++
+ /******************************************************************************
+  *              NtSetInformationThread  (NTDLL.@)
+  */
+@@ -2526,6 +2601,9 @@ NTSTATUS WINAPI NtSetInformationThread( HANDLE handle, THREADINFOCLASS class,
+             status = wine_server_call( req );
+         }
+         SERVER_END_REQ;
++#ifdef __PROSPERO__
++        if (!status) ps5_priority_changed( handle );
++#endif
+         return status;
+     }
+ 
+@@ -2541,6 +2619,9 @@ NTSTATUS WINAPI NtSetInformationThread( HANDLE handle, THREADINFOCLASS class,
+             status = wine_server_call( req );
+         }
+         SERVER_END_REQ;
++#ifdef __PROSPERO__
++        if (!status) ps5_priority_changed( handle );
++#endif
+         return status;
+     }
+ 
 diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
-index 9b6401e..83efec8 100644
+index 9b6401e..ea372ee 100644
 --- a/dlls/ntdll/unix/unix_private.h
 +++ b/dlls/ntdll/unix/unix_private.h
 @@ -28,6 +28,7 @@
@@ -1678,7 +1789,18 @@ index 9b6401e..83efec8 100644
      char         debug_info[0x800]; /* debug_info structure */
      char         signal_stack[];    /* signal stack */
      /* char kernel_stack[] */
-@@ -138,6 +144,20 @@ static inline struct thread_data *get_thread_data(void)
+@@ -133,11 +139,31 @@ struct thread_data
+ 
+ extern pthread_key_t thread_data_key;
+ 
++#ifdef __PROSPERO__
++extern void ps5_apply_thread_priority( pthread_t thread, int tid, int nt_priority, const char *why );
++extern pthread_t virtual_thread_pthread( TEB *teb );
++#endif
++
++
+ static inline struct thread_data *get_thread_data(void)
+ {
      return pthread_getspecific( thread_data_key );
  }
  
@@ -1699,7 +1821,7 @@ index 9b6401e..83efec8 100644
  /* thread private data, stored in NtCurrentTeb()->GdiTebBatch */
  struct teb_data
  {
-@@ -249,7 +269,9 @@ extern BOOL is_system_dir_path( const UNICODE_STRING *path, WORD *machine );
+@@ -249,7 +275,9 @@ extern BOOL is_system_dir_path( const UNICODE_STRING *path, WORD *machine );
  extern NTSTATUS load_main_exe( UNICODE_STRING *nt_name, USHORT load_machine );
  extern NTSTATUS load_start_exe( UNICODE_STRING *nt_name );
  extern ULONG_PTR redirect_arm64ec_rva( void *module, ULONG_PTR rva, const IMAGE_ARM64EC_METADATA *metadata );
@@ -1709,7 +1831,7 @@ index 9b6401e..83efec8 100644
  
  extern unsigned int server_call_unlocked( void *req_ptr );
  extern void server_enter_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigset );
-@@ -265,6 +287,10 @@ extern int server_get_unix_fd( HANDLE handle, unsigned int wanted_access, int *u
+@@ -265,6 +293,10 @@ extern int server_get_unix_fd( HANDLE handle, unsigned int wanted_access, int *u
                                 int *needs_close, enum server_fd_type *type, unsigned int *options );
  extern int wine_server_receive_fd( obj_handle_t *handle );
  extern void process_exit_wrapper( int status ) DECLSPEC_NORETURN;
@@ -1720,7 +1842,7 @@ index 9b6401e..83efec8 100644
  extern void server_init_process( struct thread_data *data );
  extern void server_init_process_done(void);
  extern void server_init_thread( struct thread_data *data );
-@@ -327,6 +353,7 @@ extern NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR limit_
+@@ -327,6 +359,7 @@ extern NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR limit_
  extern void virtual_map_user_shared_data(void);
  extern void virtual_init_user_shared_data(void);
  extern NTSTATUS virtual_handle_fault( struct thread_data *data, EXCEPTION_RECORD *rec, void *stack );
@@ -1728,7 +1850,7 @@ index 9b6401e..83efec8 100644
  extern unsigned int virtual_locked_server_call( void *req_ptr );
  extern ssize_t virtual_locked_read( int fd, void *addr, size_t size );
  extern ssize_t virtual_locked_pread( int fd, void *addr, size_t size, off_t offset );
-@@ -359,6 +386,8 @@ extern SYSTEM_SERVICE_TABLE KeServiceDescriptorTable[4];
+@@ -359,6 +392,8 @@ extern SYSTEM_SERVICE_TABLE KeServiceDescriptorTable[4];
  extern void __wine_syscall_dispatcher(void);
  extern void __wine_syscall_dispatcher_return(void);
  extern void __wine_unix_call_dispatcher(void);
@@ -1738,7 +1860,7 @@ index 9b6401e..83efec8 100644
  extern NTSTATUS get_thread_wow64_context( HANDLE handle, void *ctx, ULONG size );
  extern NTSTATUS set_thread_wow64_context( HANDLE handle, const void *ctx, ULONG size );
 diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
-index 64eed72..213ab18 100644
+index 64eed72..4411a31 100644
 --- a/dlls/ntdll/unix/virtual.c
 +++ b/dlls/ntdll/unix/virtual.c
 @@ -91,6 +91,23 @@
@@ -2138,7 +2260,7 @@ index 64eed72..213ab18 100644
  #else
      /* try to find space in a reserved area for the views and pages protection table */
      view_block_start = alloc_virtual_heap( 2 * view_block_size + (1U << (32 - page_shift)) );
-@@ -3731,6 +3992,62 @@ void virtual_init(void)
+@@ -3731,6 +3992,81 @@ void virtual_init(void)
  }
  
  
@@ -2156,6 +2278,25 @@ index 64eed72..213ab18 100644
 +    LIST_FOR_EACH_ENTRY( data, &teb_list, struct thread_data, entry )
 +        if (data->teb && data->pthread_id) pthread_kill( data->pthread_id, sig );
 +    server_leave_uninterrupted_section( &virtual_mutex, &sigset );
++}
++
++
++/***********************************************************************
++ *           virtual_thread_pthread
++ *
++ * The pthread of the thread with this TEB, 0 if it has not started (PS5 priorities).
++ */
++pthread_t virtual_thread_pthread( TEB *teb )
++{
++    struct thread_data *data;
++    pthread_t thread = 0;
++    sigset_t sigset;
++
++    server_enter_uninterrupted_section( &virtual_mutex, &sigset );
++    LIST_FOR_EACH_ENTRY( data, &teb_list, struct thread_data, entry )
++        if (data->teb == teb) { thread = data->pthread_id; break; }
++    server_leave_uninterrupted_section( &virtual_mutex, &sigset );
++    return thread;
 +}
 +
 +
@@ -2201,7 +2342,7 @@ index 64eed72..213ab18 100644
  /***********************************************************************
   *           get_host_page_size
   */
-@@ -3763,6 +4080,11 @@ void virtual_get_system_info( SYSTEM_BASIC_INFORMATION *info, BOOL wow64 )
+@@ -3763,6 +4099,11 @@ void virtual_get_system_info( SYSTEM_BASIC_INFORMATION *info, BOOL wow64 )
  
      if (!sysctlbyname( "hw.memsize", &memsize, &len, NULL, 0 ))
          info->MmHighestPhysicalPage = max(1, memsize / page_size);
@@ -2213,7 +2354,7 @@ index 64eed72..213ab18 100644
  #elif defined(_SC_PHYS_PAGES)
      LONG64 phys_pages = sysconf( _SC_PHYS_PAGES );
  
-@@ -4707,6 +5029,85 @@ NTSTATUS virtual_handle_fault( struct thread_data *data, EXCEPTION_RECORD *rec,
+@@ -4707,6 +5048,85 @@ NTSTATUS virtual_handle_fault( struct thread_data *data, EXCEPTION_RECORD *rec,
      }
  #endif
  
@@ -2299,7 +2440,7 @@ index 64eed72..213ab18 100644
      if (!is_inside_signal_stack( data, stack ) && (vprot & VPROT_GUARD))
      {
          struct thread_stack_info stack_info;
-@@ -4776,6 +5177,11 @@ void *virtual_setup_exception( struct thread_data *data, void *stack_ptr, size_t
+@@ -4776,6 +5196,11 @@ void *virtual_setup_exception( struct thread_data *data, void *stack_ptr, size_t
          UINT diff = stack_info.start + host_page_size - stack;
          ERR( "stack overflow %u bytes addr %p stack %p (%p-%p-%p)\n",
               diff, rec->ExceptionAddress, stack, stack_info.start, stack_info.limit, stack_info.end );
@@ -2311,7 +2452,7 @@ index 64eed72..213ab18 100644
          abort_thread(1);
      }
      else if (stack < stack_info.limit)
-@@ -6240,6 +6646,12 @@ NTSTATUS WINAPI NtQueryVirtualMemory( HANDLE process, LPCVOID addr,
+@@ -6240,6 +6665,12 @@ NTSTATUS WINAPI NtQueryVirtualMemory( HANDLE process, LPCVOID addr,
                  const void *funcs;
                  void *handle;
  
@@ -2324,7 +2465,7 @@ index 64eed72..213ab18 100644
                  if ((status = load_unixlib_by_name( name, &handle ))) return status;
                  res[0] = (UINT_PTR)handle;
                  if (!(status = get_unixlib_funcs( handle, info_class == MemoryWineLoadUnixLibByNameWow64,
-@@ -6259,6 +6671,9 @@ NTSTATUS WINAPI NtQueryVirtualMemory( HANDLE process, LPCVOID addr,
+@@ -6259,6 +6690,9 @@ NTSTATUS WINAPI NtQueryVirtualMemory( HANDLE process, LPCVOID addr,
              {
                  const unixlib_module_t *handle = addr;
  
