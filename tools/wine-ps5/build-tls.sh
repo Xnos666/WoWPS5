@@ -34,7 +34,10 @@ compile() {
         if [[ $package == nettle-* ]]; then
             make -j"$jobs" all-here > build.log 2>&1 && make install-here > install.log 2>&1
         elif [[ $package == gnutls-* ]]; then
-            make -C lib -j"$jobs" > build.log 2>&1 && make -C lib install > install.log 2>&1
+            # gnulib (gl/) generates replacement headers lib/ includes, byteswap.h among them
+            # (the SDK's libc has none): build it first, or a fresh tree does not compile.
+            make -C gl -j"$jobs" > build.log 2>&1 && make -C lib -j"$jobs" >> build.log 2>&1 &&
+                make -C lib install > install.log 2>&1
         else
             make -j"$jobs" > build.log 2>&1 && make install > install.log 2>&1
         fi
