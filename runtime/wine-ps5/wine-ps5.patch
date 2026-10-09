@@ -88,6 +88,28 @@ index 9a15bc3..85bad96 100644
  	unix/virtual.c \
  	unwind.c \
  	version.c \
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index b0b2392..9c4a08f 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -4019,11 +4019,17 @@ void WINAPI LdrShutdownThread(void)
+  *           free_modref
+  *
+  */
++#ifdef __x86_64__
++extern void unwind_cache_forget(void);
++#endif
+ static void free_modref( WINE_MODREF *wm )
+ {
+     SINGLE_LIST_ENTRY *entry;
+     LDR_DEPENDENCY *dep;
+ 
++#ifdef __x86_64__
++    unwind_cache_forget();   /* its function entries go with it */
++#endif
+     RemoveEntryList(&wm->ldr.InLoadOrderLinks);
+     RemoveEntryList(&wm->ldr.InMemoryOrderLinks);
+     RemoveEntryList(&wm->ldr.HashLinks);
 diff --git a/dlls/ntdll/unix/debug.c b/dlls/ntdll/unix/debug.c
 index 53516b9..d6adcd4 100644
 --- a/dlls/ntdll/unix/debug.c
@@ -2475,6 +2497,163 @@ index 64eed72..4411a31 100644
                  if (!dlclose( (void *)(UINT_PTR)*handle )) return STATUS_SUCCESS;
              }
              return STATUS_INVALID_HANDLE;
+diff --git a/dlls/ntdll/unwind.c b/dlls/ntdll/unwind.c
+index f070734..d8c4c3a 100644
+--- a/dlls/ntdll/unwind.c
++++ b/dlls/ntdll/unwind.c
+@@ -35,6 +35,10 @@
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(unwind);
+ 
++#if defined(__x86_64__) && !defined(__arm64ec__)
++void unwind_cache_forget(void);   /* with RtlLookupFunctionEntry */
++#endif
++
+ 
+ /***********************************************************************
+  * C specific handler
+@@ -140,6 +144,9 @@ BOOLEAN CDECL RtlInstallFunctionTableCallback( ULONG_PTR table, ULONG_PTR base,
+ 
+     RtlEnterCriticalSection( &dynamic_unwind_section );
+     list_add_tail( &dynamic_unwind_list, &entry->entry );
++#if defined(__x86_64__) && !defined(__arm64ec__)
++    unwind_cache_forget();
++#endif
+     RtlLeaveCriticalSection( &dynamic_unwind_section );
+ 
+     return TRUE;
+@@ -170,6 +177,9 @@ NTSTATUS WINAPI RtlAddGrowableFunctionTable( void **table, RUNTIME_FUNCTION *fun
+ 
+     RtlEnterCriticalSection( &dynamic_unwind_section );
+     list_add_tail( &dynamic_unwind_list, &entry->entry );
++#if defined(__x86_64__) && !defined(__arm64ec__)
++    unwind_cache_forget();
++#endif
+     RtlLeaveCriticalSection( &dynamic_unwind_section );
+ 
+     *table = entry;
+@@ -197,6 +207,9 @@ void WINAPI RtlGrowFunctionTable( void *table, DWORD count )
+             break;
+         }
+     }
++#if defined(__x86_64__) && !defined(__arm64ec__)
++    unwind_cache_forget();
++#endif
+     RtlLeaveCriticalSection( &dynamic_unwind_section );
+ }
+ 
+@@ -220,6 +233,9 @@ void WINAPI RtlDeleteGrowableFunctionTable( void *table )
+             break;
+         }
+     }
++#if defined(__x86_64__) && !defined(__arm64ec__)
++    unwind_cache_forget();
++#endif
+     RtlLeaveCriticalSection( &dynamic_unwind_section );
+ 
+     RtlFreeHeap( GetProcessHeap(), 0, to_free );
+@@ -245,6 +261,9 @@ BOOLEAN CDECL RtlDeleteFunctionTable( RUNTIME_FUNCTION *table )
+             break;
+         }
+     }
++#if defined(__x86_64__) && !defined(__arm64ec__)
++    unwind_cache_forget();
++#endif
+     RtlLeaveCriticalSection( &dynamic_unwind_section );
+ 
+     if (!to_free) return FALSE;
+@@ -2316,6 +2335,67 @@ EXCEPTION_DISPOSITION WINAPI __C_specific_handler( EXCEPTION_RECORD *rec, void *
+ }
+ 
+ 
++#if defined(__x86_64__) && !defined(__arm64ec__)
++/* Function entries by code address. The client walks its stacks all the time
++ * (RtlCaptureStackBackTrace) and looks the same return addresses up again and
++ * again: 2.7% of its main thread in Undercity went to finding them (module
++ * tree, exception directory, binary search over ~300,000 entries). Each entry
++ * has a sequence number, odd while it is written: a reader that sees it odd or
++ * changed takes the slow path, so a torn entry is never used. The generation
++ * forgets everything when a module is unloaded or a dynamic table changes. */
++struct unwind_cache_entry
++{
++    volatile LONG     seq;
++    LONG              gen;
++    ULONG_PTR         pc;
++    ULONG_PTR         base;
++    RUNTIME_FUNCTION *func;
++};
++static struct unwind_cache_entry unwind_cache[4096];
++static volatile LONG unwind_cache_gen = 1;
++
++void unwind_cache_forget(void)
++{
++    InterlockedIncrement( &unwind_cache_gen );
++}
++
++static BOOL unwind_cache_get( ULONG_PTR pc, ULONG_PTR *base, RUNTIME_FUNCTION **func )
++{
++    struct unwind_cache_entry *entry = &unwind_cache[(pc >> 2) & (ARRAY_SIZE(unwind_cache) - 1)];
++    LONG seq = entry->seq;
++    ULONG_PTR cached_pc, cached_base;
++    RUNTIME_FUNCTION *cached_func;
++    LONG cached_gen;
++
++    if (seq & 1) return FALSE;
++    __asm__ __volatile__( "" ::: "memory" );
++    cached_pc = entry->pc;
++    cached_base = entry->base;
++    cached_func = entry->func;
++    cached_gen = entry->gen;
++    __asm__ __volatile__( "" ::: "memory" );
++    if (entry->seq != seq || cached_pc != pc || cached_gen != unwind_cache_gen) return FALSE;
++    *base = cached_base;
++    *func = cached_func;
++    return TRUE;
++}
++
++static void unwind_cache_put( ULONG_PTR pc, ULONG_PTR base, RUNTIME_FUNCTION *func, LONG gen )
++{
++    struct unwind_cache_entry *entry = &unwind_cache[(pc >> 2) & (ARRAY_SIZE(unwind_cache) - 1)];
++    LONG seq = entry->seq;
++
++    /* one writer at a time; another writer's entry is as good */
++    if ((seq & 1) || InterlockedCompareExchange( &entry->seq, seq + 1, seq ) != seq) return;
++    entry->pc = pc;
++    entry->base = base;
++    entry->func = func;
++    entry->gen = gen;
++    __asm__ __volatile__( "" ::: "memory" );
++    entry->seq = seq + 2;
++}
++#endif
++
+ /**********************************************************************
+  *              RtlLookupFunctionEntry   (NTDLL.@)
+  */
+@@ -2331,8 +2411,23 @@ PRUNTIME_FUNCTION WINAPI RtlLookupFunctionEntry( ULONG_PTR pc, ULONG_PTR *base,
+         return (RUNTIME_FUNCTION *)RtlLookupFunctionEntry_arm64( pc, base, table );
+ #endif
+ 
++#if defined(__x86_64__) && !defined(__arm64ec__)
++    {
++        RUNTIME_FUNCTION *found;
++        LONG gen = unwind_cache_gen;
++
++        if (unwind_cache_get( pc, base, &found )) return found;
++        if ((func = RtlLookupFunctionTable( pc, base, &size )))
++        {
++            if ((found = find_function_info( pc, *base, func, size / sizeof(*func) )))
++                unwind_cache_put( pc, *base, found, gen );
++            return found;
++        }
++    }
++#else
+     if ((func = RtlLookupFunctionTable( pc, base, &size )))
+         return find_function_info( pc, *base, func, size / sizeof(*func));
++#endif
+ 
+     if ((func = lookup_dynamic_function_table( pc, &dynbase, &size )))
+     {
 diff --git a/dlls/secur32/schannel_gnutls.c b/dlls/secur32/schannel_gnutls.c
 index 83b9f8f..a56dde6 100644
 --- a/dlls/secur32/schannel_gnutls.c
