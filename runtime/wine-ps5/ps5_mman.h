@@ -102,6 +102,9 @@ struct ps5w_stats {
    uint64_t direct_bytes; /* direct memory held now */
    uint64_t allocations;  /* kernel direct-memory allocations made, ever */
    uint64_t shared_objects; /* files held in direct memory for their executable views, now */
+   uint64_t protects;          /* kernel protection changes of committed memory, ever */
+   uint64_t protects_skipped;  /* runs of committed memory that already had the protection asked for, ever */
+   uint64_t commits, commit_bytes; /* reserved memory committed (direct memory mapped and zeroed), ever */
 };
 void ps5w_live(struct ps5w_stats *stats);
 

@@ -718,14 +718,30 @@ ps5w_mprotect(void *address, size_t bytes, int prot)
          error = ENOMEM;
          break;
       case PS5W_RESERVED: /* first access to reserved memory commits it */
-         if (prot & ACCESS)
+         if (prot & ACCESS) {
+            live.commits++;
+            live.commit_bytes += end - at;
             error = commit(at, end, prot, false);
+         }
          break;
       case PS5W_COMMITTED:
-         if (kernel->protect((void *)at, end - at, prot & ACCESS) != 0)
-            error = EACCES;
-         else
-            mark(at, end, PS5W_COMMITTED, prot);
+         /* Only the runs whose protection changes go to the kernel. Allocators commit
+          * and protect memory that already is so all the time (Wine passes every
+          * commit on as an mprotect of the whole range), and each call is about 30
+          * microseconds on the console. */
+         for (uintptr_t run = at; run < end && !error;) {
+            const int had = PROTECTION(*page_entry(run, false));
+            uintptr_t stop = run + PS5W_PAGE;
+            while (stop < end && PROTECTION(*page_entry(stop, false)) == had)
+               stop += PS5W_PAGE;
+            if (had == (prot & ACCESS))
+               live.protects_skipped++;
+            else if (live.protects++, kernel->protect((void *)run, stop - run, prot & ACCESS) != 0)
+               error = EACCES;
+            else
+               mark(run, stop, PS5W_COMMITTED, prot);
+            run = stop;
+         }
          break;
       case PS5W_FILE:
          if (!alias && (prot & PROT_EXEC)) {

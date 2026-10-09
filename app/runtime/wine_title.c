@@ -36,6 +36,7 @@ bool wowps5WineWanted(const char* requestPath) { (void)requestPath; return false
 #include <sys/stat.h>
 #include <sys/uio.h>
 #include <sys/types.h>
+#include "../../runtime/wine-ps5/ps5_mman.h"   // ps5w_live (WOWPS5_VM_STATS)
 
 void __wine_main(int argc, char* argv[]);
 void wowps5_input_start(void);
@@ -686,6 +687,18 @@ static void* descriptorThread(void* unused) {
                 slow = atomic_exchange(&ioSlow, 0), near = atomic_exchange(&ioNear, 0), small = atomic_exchange(&ioSmall, 0);
             if(reads) fprintf(stderr, "[WoWPS5 Wine] reads in 10 s: %llu (%.1f MiB) taking %.2f s in all; %llu over 0.2 ms; %llu right after the one before; %llu under 16 KiB\n",
                 reads, (double)amount / 1048576, (double)spent / 1e9, slow, near, small);
+        }
+        if(getenv("WOWPS5_VM_STATS")) {
+            // WOWPS5_VM_STATS=1: what the memory layer did in the last 10 s
+            static struct ps5w_stats before;
+            struct ps5w_stats now;
+            ps5w_live(&now);
+            fprintf(stderr, "[WoWPS5 Wine] memory in 10 s: %llu protection changes, %llu already as asked (no call), "
+                "%llu commits (%.1f MiB); committed now %.0f MiB, direct %.0f MiB\n",
+                (unsigned long long)(now.protects - before.protects), (unsigned long long)(now.protects_skipped - before.protects_skipped),
+                (unsigned long long)(now.commits - before.commits), (double)(now.commit_bytes - before.commit_bytes) / 1048576,
+                (double)now.committed_pages * PS5W_PAGE / 1048576, (double)now.direct_bytes / 1048576);
+            before = now;
         }
         const unsigned open = files + pipes + sockets + other;
         if(open > said + 64 || open + 64 < said) {
