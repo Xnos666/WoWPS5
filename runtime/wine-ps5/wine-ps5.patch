@@ -1646,7 +1646,7 @@ index aaae9a2..8b3e1ab 100644
          {
              struct xsw_usage swap;
 diff --git a/dlls/ntdll/unix/thread.c b/dlls/ntdll/unix/thread.c
-index d5a5f57..d56e1a4 100644
+index d5a5f57..5b34bdb 100644
 --- a/dlls/ntdll/unix/thread.c
 +++ b/dlls/ntdll/unix/thread.c
 @@ -1116,6 +1116,9 @@ static void contexts_from_server( CONTEXT *context, struct context_data server_c
@@ -1674,7 +1674,7 @@ index d5a5f57..d56e1a4 100644
  
  
 +#ifdef __PROSPERO__
-+/* WOWPS5_PRIORITIES=1: a thread's NT priority becomes its console priority.
++/* A thread's NT priority becomes its console priority (WOWPS5_PRIORITIES=0 turns it off).
 + * Wine applies NT priorities only on Linux and macOS; on the console every
 + * thread of the program runs first-in-first-out at the title's one priority
 + * (700), so a busy worker is never pre-empted by the thread the frame waits
@@ -1696,7 +1696,7 @@ index d5a5f57..d56e1a4 100644
 +            ps5_priority_step = atoi( text );
 +        if (!pthread_getschedparam( pthread_self(), &policy, &param )) ps5_priority_base = param.sched_priority;
 +        text = getenv( "WOWPS5_PRIORITIES" );
-+        ps5_priority_mode = text && text[0] == '1';
++        ps5_priority_mode = !(text && text[0] == '0');   /* on unless WOWPS5_PRIORITIES=0 */
 +        if (ps5_priority_mode || ps5_priority_log)
 +            fprintf( stderr, "[WoWPS5 Wine] priorities: %s; normal threads at %d, %d a step (policy %d)\n",
 +                     ps5_priority_mode ? "applied" : "logged only", ps5_priority_base, ps5_priority_step, policy );
