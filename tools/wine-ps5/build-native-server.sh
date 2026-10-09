@@ -135,7 +135,9 @@ echo "wineserver-inproc.o: $(wc -l < "${LOGDIR}/native-server-imports-${tag}.txt
 # An import that an ntdll Unix object defines would silently bind to ntdll's
 # function instead of libc's once both are in one image.
 ntdll_defs="${LOGDIR}/native-server-ntdll-globals-${tag}.txt"
-"${NM}" -g --defined-only "${BUILD}"/dlls/ntdll/unix/*.o 2>/dev/null | awk 'NF>=3{print $NF}' | LC_ALL=C sort -u > "${ntdll_defs}"
+# (|| true: in a fresh tree there are no ntdll objects yet, and under pipefail nm's
+# failure on the unmatched pattern would end the script before the note below)
+{ "${NM}" -g --defined-only "${BUILD}"/dlls/ntdll/unix/*.o 2>/dev/null || true; } | awk 'NF>=3{print $NF}' | LC_ALL=C sort -u > "${ntdll_defs}"
 if [[ -s "${ntdll_defs}" ]]; then
     # (the memory layer's calls, ps5w_*, are meant to bind there: the server declares its sections to it)
     clash="$(LC_ALL=C comm -12 "${LOGDIR}/native-server-imports-${tag}.txt" "${ntdll_defs}" | grep -v '^ps5w_' | tr '\n' ' ' || true)"
