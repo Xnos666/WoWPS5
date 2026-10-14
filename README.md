@@ -1,72 +1,128 @@
-# WoW Forever on PS5
+<div align="center">
 
-**World of Warcraft: Forever, the Windows client, running natively on a jailbroken PlayStation 5.**
-No streaming and no Linux: the game's own `WowB.exe` runs inside one PS5 app, on Wine, with its DirectX 12 translated to the console's GPU.
+# WoW on PS5
 
-![Playing on a PS5 at 84 frames a second](docs/images/gameplay.jpg)
+### World of Warcraft — **Forever** and **Classic Era** — running natively on a jailbroken PlayStation 5
+
+The game's own Windows client runs inside one PS5 app, on Wine, with its DirectX 12 translated to the console's GPU.<br>
+No streaming. No Linux. No PC in the loop once it's copied.
+
+[![Platform](https://img.shields.io/badge/platform-PS5%20(jailbroken)-003791?logo=playstation&logoColor=white)](#what-you-need)
+[![Games](https://img.shields.io/badge/WoW-Forever%20%C2%B7%20Classic%20Era-f8b700?logo=battledotnet&logoColor=white)](#the-games)
+[![Wine](https://img.shields.io/badge/Wine-11.19-7f1d1d?logo=wine&logoColor=white)](runtime/wine-ps5/README.md)
+[![Graphics](https://img.shields.io/badge/D3D12%20%E2%86%92%20Vulkan-vkd3d--proton%20%2B%20RADV-c2410c)](#how-it-works)
+[![License](https://img.shields.io/badge/license-MIT%20%2B%20LGPL%20(Wine%20patch)-2563eb)](LICENSE)
+
+[**Install**](#install-it) · [**Play**](#playing) · [**Launch settings**](#launch-settings) · [**Troubleshooting**](#if-something-goes-wrong) · [**How it works**](#how-it-works) · [**Build**](#building-it-yourself)
+
+![WoW Forever on a PS5 at 84 frames a second](docs/images/gameplay.jpg)
 
 | | |
 |---|---|
 | ![Entering Durotar](docs/images/durotar.jpg) | ![The title screen](docs/images/title.jpg) |
 
-*Captured from a PS5 over Remote Play. The green text in the corner was a debug label used for the recording; it is not part of the release.*
+<sub>WoW Forever, captured from a PS5 over Remote Play. The green text in the corner was a debug label used for the recording; it is not part of the release.</sub>
 
-| | |
-|---|---|
-| **Works** | Login, character select, playing in the world, sound, controller (the game's own console UI), touchpad as a mouse, USB keyboard and mouse, an on-screen keyboard, 76 to 99 frames a second in the world with vertical sync off |
-| **Tested on** | One console: PS5 firmware 8.20, etaHEN with kstuff, ShadowMount+ 1.6 beta 16; client builds 1.60.1.70205 and 1.60.1.70235 (`_classic_beta_`) |
-| **Not included** | The game. You copy your own installation, and you sign in with your own account on the console |
+</div>
 
-This is a hobby project. It is not affiliated with or endorsed by Blizzard Entertainment or Sony. Use it with a game you own, at your own risk.
+> [!IMPORTANT]
+> A hobby project, not affiliated with or endorsed by Blizzard Entertainment or Sony. **The game is not included**: you copy your own installation and sign in with your own account on the console. Use it at your own risk.
 
 ---
 
-## Install it (about 15 minutes of your time, plus the copy)
+## The games
+
+One app, two clients. Copy either or both; the app starts the one you pick.
+
+| | WoW Forever | WoW Classic Era |
+|---|---|---|
+| **Folder** | `_classic_beta_` | `_classic_era_` |
+| **Program** | `WowB.exe` | `WowClassic.exe` |
+| **Client build tested** | 1.60.1.70205, 70235, 70374 | 1.15.9.70003 |
+| **Status** | ✅ Sign-in, character select, playing in the world, sound, controller | 🧪 New: starts on the console and plays its intro; sign-in and the world are being tested |
+| **Graphics** | DirectX 12, as on PC | DirectX 12, forced (`-d3d12` and `GxApi D3D12`, set up by the installer) |
+
+Both share the `Data` folder and `.build.info`, exactly as Battle.net lays them out on a PC.
+
+### What's new in this fork
+
+- **Classic Era support.** The app knows both clients and starts the first one it finds (Forever, then Classic Era), or the one named by `WOWPS5_GAME` in the [launch settings](#launch-settings).
+- **`install.py --flavor`** copies only the game you want (`_classic_beta_`, `_classic_era_`, or both).
+- **`install.py --start`** switches the game the app starts, without copying anything again.
+- **No more black screen on a first start.** A client with no `WTF/Config.wtf` asks for your region and language in a window the console cannot show. The installer now writes a short `Config.wtf` (region, language, `GxApi D3D12`) for each game that has none, taking your PC's own values when it has them.
+- **Faster runtime** (from the `perf/runtime` work): thread priorities on by default (Trade Quarter: about 43 → 57–62 frames a second), no kernel call for memory protection that is already right, and a cache for `RtlLookupFunctionEntry`. Details in [docs/technical-notes.md](docs/technical-notes.md).
+
+---
+
+## Install it
+
+About 15 minutes of your time, plus the copy (50 to 65 GiB, depending on what you have installed).
 
 ### What you need
 
 1. **A jailbroken PS5** with a homebrew enabler running (tested: etaHEN with kstuff), and:
    - its **FTP server** on (port 2121 is the default of the common payloads),
    - **ShadowMount** (or another way to register an app folder from `/data/homebrew`),
-   - about **70 GB free** on the internal drive.
+   - about **70 GB free** on the internal drive (more with both games).
 2. **A PC on the same network** with Python 3 (Linux, macOS or Windows).
-3. **Your own World of Warcraft installation** with the `_classic_beta_` folder (WoW: Forever) in it.
-4. The console's address on your network (PS5: Settings, Network, View Connection Status).
+3. **Your own World of Warcraft installation**, kept up to date by Battle.net, with `_classic_beta_` (WoW Forever) and/or `_classic_era_` (WoW Classic Era) in it.
+4. The console's address on your network (PS5: Settings → Network → View Connection Status).
 
 ### Steps
 
-1. Download **`WoWForever-PS5.zip`** from the [latest release](../../releases/latest) and unpack it.
+1. Download the bundle from the [latest release](../../releases/latest) and unpack it.
 2. Turn the console on and run your jailbreak, so that FTP and ShadowMount are up.
-3. Copy the files to the console, either way:
-
-   **A. With the installer** (it copies everything, your game included, and can be re-run if interrupted):
+3. Run the installer from the unpacked folder. It copies the app, Wine and your game, and can be re-run if it is interrupted:
 
    ```sh
-   cd WoWForever-PS5
+   # Everything you have installed; the app starts Forever if it is there
    python3 install.py --host 192.168.1.50 --wow "/path/to/World of Warcraft"
+
+   # Only Classic Era, and start it
+   python3 install.py --host 192.168.1.50 --wow "/path/to/World of Warcraft" --flavor _classic_era_ --start _classic_era_
    ```
 
-   `--host` is the console's address; `--wow` is your game folder, the one that holds `_classic_beta_` and `Data`. Nothing needs editing.
+   `--host` is the console's address; `--wow` is your game folder, the one that holds `Data` and the game folders. Nothing needs editing. Your installation on the PC is only read.
 
-   **B. By hand**, with any FTP program (FileZilla, WinSCP) connected to the console on port 2121:
-
-   | Copy this | To this place on the PS5 |
-   |---|---|
-   | the folder `title/PPSA99220` | `/data/homebrew/PPSA99220` |
-   | the folder `runtime/wowps5/wine` | `/data/wowps5/wine` |
-   | the file `runtime/wowps5/ca-certificates.crt` | `/data/wowps5/ca-certificates.crt` |
-   | the three `.reg` files in `runtime/wowps5/prefix` | `/data/wowps5/prefix/` |
-   | everything inside `runtime/wowps5/prefix/drive_c` | `/data/wowps5/prefix/dosdevices/c:/` (the last folder is named `c:`, with the colon) |
-   | your game's `Data` folder and `_classic_beta_` folder | `/data/wowps5/prefix/dosdevices/c:/Games/World of Warcraft/` |
-
-   From `_classic_beta_`, leave out `WTF`, `Interface`, `Cache`, `Logs` and `Errors`: PC settings do not suit the console, and the game makes these again.
-
-4. On the console, **WoW Forever** appears on the home screen within a minute. Start it.
+4. On the console, the app appears on the home screen within a minute (its tile is still called **WoW Forever**). Start it.
 5. Sign in. Press **L3 + R3** (click both sticks) to type with the on-screen keyboard.
 
-Your installation on the PC is only read. The game is about 64 GiB, so the copy takes a while over FTP.
-
 The first start, and the first visit to each place, are slower than later ones: the graphics driver compiles the game's shaders once and keeps them.
+
+### Switching games
+
+```sh
+python3 install.py --host 192.168.1.50 --skip-app --start _classic_era_    # Classic Era
+python3 install.py --host 192.168.1.50 --skip-app --start _classic_beta_   # WoW Forever
+python3 install.py --host 192.168.1.50 --skip-app --start auto             # the first installed
+```
+
+This only rewrites the `WOWPS5_GAME` line of `/data/wowps5/launch.txt`; you can also edit that file over FTP yourself.
+
+<details>
+<summary><b>Installing by hand instead</b> (FileZilla, WinSCP or any FTP program on port 2121)</summary>
+
+| Copy this | To this place on the PS5 |
+|---|---|
+| the folder `title/PPSA99220` | `/data/homebrew/PPSA99220` |
+| the folder `runtime/wowps5/wine` | `/data/wowps5/wine` |
+| the file `runtime/wowps5/ca-certificates.crt` | `/data/wowps5/ca-certificates.crt` |
+| the three `.reg` files in `runtime/wowps5/prefix` | `/data/wowps5/prefix/` |
+| everything inside `runtime/wowps5/prefix/drive_c` | `/data/wowps5/prefix/dosdevices/c:/` (the last folder is named `c:`, with the colon) |
+| your game's `Data` folder, `.build.info`, and `_classic_beta_` and/or `_classic_era_` | `/data/wowps5/prefix/dosdevices/c:/Games/World of Warcraft/` |
+
+From the game folders, leave out `WTF`, `Interface`, `Cache`, `Logs` and `Errors`: PC settings do not suit the console, and the game makes these again. Then give each game a `WTF/Config.wtf` on the console with at least:
+
+```
+SET portal "US"
+SET textLocale "enUS"
+SET audioLocale "enUS"
+SET GxApi "D3D12"
+```
+
+(`portal "test"` for WoW Forever; use your own region and language.) For Classic Era, also add the two lines from [Launch settings](#launch-settings).
+
+</details>
 
 ### When the game updates
 
@@ -76,9 +132,9 @@ The console cannot update the game itself. Let Battle.net update it on the PC, c
 python3 install.py --host 192.168.1.50 --wow "/path/to/World of Warcraft" --skip-app
 ```
 
-It sends only the files the update changed (a few GiB, not the whole game). If your first copy was made by hand or with release 0.1.0, add `--since "YYYY-MM-DD HH:MM"` with the time of that copy, once: an update changes files without changing their size, and the installer has to know which are newer. By hand, copy `Data` and `_classic_beta_` again, replacing what is there.
+It sends only the files the update changed (a few GiB, not the whole game). If your first copy was made by hand or with release 0.1.0, add `--since "YYYY-MM-DD HH:MM"` with the time of that copy, once: an update changes files without changing their size, and the installer has to know which are newer.
 
-A new version of this port is installed the same way as the first: unpack the new release and run the installer (or copy `title/PPSA99220` again). Your game, settings and shaders on the console stay.
+A new version of this port is installed the same way as the first: unpack the new release and run the installer. Your game, settings and shaders on the console stay.
 
 ---
 
@@ -92,13 +148,13 @@ A new version of this port is installed the same way as the first: unpack the ne
 | Touchpad | Moves the mouse pointer; pressing it is a left click |
 | **L3 + R3** (click both sticks together) | Opens the PS5 on-screen keyboard. What you type goes into the text box that has focus (login, search, chat), when you confirm |
 | **L3 + R3 again**, before pressing anything else | Opens the keyboard with what you just typed, to fix a mistake: confirming replaces the old text. Confirming an empty keyboard just deletes it |
-| USB keyboard and mouse | Work as on a PC |
+| USB keyboard and mouse | Work as on a PC (and **Esc** skips Classic Era's intro cinematic) |
 
 ### Frame rate above 60 (the uncapped mode)
 
 By default a PS5 app gets exactly as many frames as the TV shows. This port adds a second way of presenting to the graphics driver, where the game draws as fast as it can and the screen shows the newest finished frame at each refresh, with no tearing.
 
-To use it, in the game: **System, Graphics, turn Vertical Sync off**, and set **Max Foreground FPS** to what you like (or off). The game's frame counter then goes above 60 and input feels more direct; the TV still shows its own refresh rate. Turning Vertical Sync back on returns to the default.
+To use it, in the game: **System → Graphics → turn Vertical Sync off**, and set **Max Foreground FPS** to what you like (or off). The game's frame counter then goes above 60 and input feels more direct; the TV still shows its own refresh rate.
 
 ### Good to know
 
@@ -106,31 +162,99 @@ To use it, in the game: **System, Graphics, turn Vertical Sync off**, and set **
 - **Settings and add-on data** are saved on the console when you leave the game normally.
 - **A "system software" message** from the PS5 while the game runs can be dismissed.
 - **No voice chat.**
-- **Advanced settings** go in `/data/wowps5/launch.txt` on the console, one `NAME=value` a line. For example `PS5_VIDEOOUT_MAILBOX=0` removes the uncapped mode, and `VKD3D_CONFIG=` turns off single-queue mode (the default is `single_queue`). Delete the file to return to the defaults.
 
-### If something goes wrong
+---
+
+## Launch settings
+
+`/data/wowps5/launch.txt` on the console, one setting a line, read at every start. Delete the file to return to the defaults.
+
+| Line | What it does |
+|---|---|
+| `NAME=value` | An environment setting for Wine and the game |
+| `+argument` | An argument for the game's program (for example `+-d3d12`) |
+| `# ...` | A comment |
+
+| Setting | Default | |
+|---|---|---|
+| `WOWPS5_GAME=<path of the .exe on the console>` | first installed | Which game starts. Classic Era: `/data/wowps5/prefix/dosdevices/c:/Games/World of Warcraft/_classic_era_/WowClassic.exe` |
+| `+-d3d12` | — | Keeps the client on DirectX 12, the only graphics the port translates. Recommended for Classic Era |
+| `PS5_VIDEOOUT_MAILBOX=0` | on | Removes the uncapped present mode |
+| `VKD3D_CONFIG=` | `single_queue` | Empty turns single-queue mode off |
+| `WOWPS5_PRIORITIES=0` | on | Turns the console thread priorities off |
+| `WOWPS5_OSK_CHAT=OPTIONS+L3` | off | A second keyboard shortcut for chat (Enter, text, Enter) |
+| `WINEDEBUG=+loaddll,warn+seh` | — | Wine's debug channels, to the console's log (see below) |
+
+A Classic Era setup, as the installer writes it:
+
+```ini
+# install.py --start: the game the app starts
+WOWPS5_GAME=/data/wowps5/prefix/dosdevices/c:/Games/World of Warcraft/_classic_era_/WowClassic.exe
++-d3d12
+```
+
+---
+
+## If something goes wrong
 
 | What you see | What to do |
 |---|---|
 | The installer says there is no FTP server | Check the console's address, that the jailbreak ran, and that its FTP server is on port 2121 (`--port` to change it) |
-| No "WoW Forever" on the home screen | ShadowMount must be loaded; it looks in `/data/homebrew`. Removing the tile and letting it be added again also refreshes its name and pictures |
-| A black screen for a long time on the very first start | Wait: the first start compiles shaders. Later starts are much faster |
-| The game closes on start | Make sure the copy finished (run the installer again; it only sends what is missing) and that the client is the build above |
-| The game has updated on your PC | The console's copy needs the same update: see [When the game updates](#when-the-game-updates) |
-| The picture freezes in the world (sound may carry on) | Close the game from the PS button and start it again. Release 0.1.1 fixes two crashes of this kind that came with client build 70235; a crash still shows as a frozen picture because the game's crash window is not visible on the console |
+| No app on the home screen | ShadowMount must be loaded; it looks in `/data/homebrew`. Removing the tile and letting it be added again also refreshes its name and pictures |
+| **A black screen that never ends** (Classic Era especially) | The client is waiting in its region/language window, which the console cannot show. Close the app and give the game a `WTF/Config.wtf` with `portal`, `textLocale` and `audioLocale`: run the installer again with `--wow` (it writes one if there is none), or copy the four lines from [Installing by hand](#install-it) |
+| A black screen for a while on the very first start | Wait: the first start compiles shaders. Later starts are much faster |
+| Classic Era's intro cinematic cannot be skipped | The controller does not skip it. Press **Esc** on a USB keyboard, or let it finish; it plays only the first time |
+| The game closes on start | Make sure the copy finished (run the installer again; it only sends what is missing) and that the client matches the build on your PC |
+| Sign-in fails with **BLZ51914400** | The client signs in directly, without the Battle.net app (which cannot run on the console), and Blizzard sometimes refuses that. Starting the client directly on a PC then shows the same error: it is on Blizzard's side, not something the port changes |
+| The picture freezes in the world (sound may carry on) | Close the game from the PS button and start it again. A crash shows as a frozen picture because the game's crash window is not visible on the console |
 | Lua warnings about SavedVariables, or settings that do not stick | Update to the latest release: this was a limit of 250 open files that the port now stays under |
+
+### Seeing what the console sees
+
+The app writes everything Wine and the game print to the console's kernel log. To read it on your PC, load a klog server payload (for example [klogsrv](https://github.com/ps5-payload-dev/klogsrv), sent to your ELF loader on port 9021) and follow it on port 3232, or let `tools/wine-ps5/klog-record.py` keep it in files. Add `WINEDEBUG=` channels to `launch.txt` for more: `+win,+dialog` shows windows the console cannot draw (that is how the hidden region window was found).
 
 ---
 
-## How it works, in one paragraph
+## How it works
 
-A PS5 app cannot start a second program, has 16 KiB memory pages, may not read its own code, and gets about 250 open files. So Wine 11.19 runs as **one process** inside the app, with its server on a thread and its Unix side linked into the app's executable; a memory layer gives Windows programs the 4 KiB pages and executable memory they expect; **vkd3d-proton** turns the game's DirectX 12 into Vulkan; and **RADV** (Mesa's driver, in Mihawk's PS5 port) drives the console's GPU. Every change to Wine is one patch against a pinned revision, and each exists for something measured on the console: see [docs/technical-notes.md](docs/technical-notes.md).
+A PS5 app cannot start a second program, has 16 KiB memory pages, may not read its own code, and gets about 250 open files. So the whole of Windows has to live inside one app:
+
+```mermaid
+flowchart TB
+    subgraph APP["PS5 app PPSA99220 · one process"]
+        direction TB
+        GAME["WowB.exe / WowClassic.exe<br/><i>your own copy, unmodified</i>"]
+        PE["Wine 11.19 · Windows side<br/>ntdll · kernel32 · user32 · ws2_32 …"]
+        D3D["vkd3d-proton<br/>Direct3D 12 → Vulkan"]
+        UNIX["Wine · Unix side<br/>linked into the app"]
+        SRV["wineserver<br/>on a thread, not a process"]
+        MEM["Memory layer<br/>4 KiB pages · real executable memory"]
+        RADV["RADV<br/>Mesa's Vulkan driver, PS5 port"]
+        IO["Controller · touchpad · on-screen keyboard · sound"]
+        GAME --> PE
+        GAME -- "D3D12" --> D3D
+        PE --> UNIX
+        UNIX <--> SRV
+        UNIX --> MEM
+        D3D -- "Vulkan" --> RADV
+        IO --> UNIX
+    end
+    RADV --> GPU[("PS5 GPU")]
+    MEM --> KERNEL[("PS5 kernel<br/>etaHEN + kstuff")]
+```
+
+- **One process.** Wine's server runs on a thread and its Unix side is linked into the app's executable.
+- **Memory.** A memory layer gives Windows programs the 4 KiB pages and executable memory they expect, on top of the console's direct memory.
+- **Graphics.** **vkd3d-proton** turns the game's DirectX 12 into Vulkan, and **RADV** (Mesa's driver, in Mihawk's PS5 port) drives the console's GPU, with an added present mode for frame rates above the TV's.
+- **Choosing a game.** The app looks for `_classic_beta_/WowB.exe`, then `_classic_era_/WowClassic.exe`, unless `WOWPS5_GAME` names one (`app/runtime/wine_title.c`).
+
+Every change to Wine is one patch against a pinned revision, and each exists for something measured on the console: see [docs/technical-notes.md](docs/technical-notes.md).
 
 ## What is in this repository
 
 | Here | What |
 |---|---|
-| `app/` | The PS5 app: the platform side (`app/ps5`), and what it does around Wine (`app/runtime`: start-up, files, sound, controller, on-screen keyboard) |
+| `app/` | The PS5 app: the platform side (`app/ps5`), and what it does around Wine (`app/runtime`: start-up and game choice, files, sound, controller, on-screen keyboard) |
 | `runtime/wine-ps5/` | Every change to Wine as one patch, and the memory layer |
 | `runtime/radv-ps5/` | The uncapped present mode, as a patch to the graphics driver's display code |
 | `tools/` | Build, install, run and test scripts; the Windows test programs |
@@ -140,7 +264,7 @@ Not here: the game, anything of an account, and the third-party source (`vendor/
 
 ## Building it yourself
 
-The release bundle is the supported way to install. In this fork a fresh build has been reproduced (Ubuntu 24.04 under WSL, clang 18, Meson 1.9, LLVM 19 for Mesa's host tool) with `tools/build-all.sh`, which runs the steps below in order and fixes what a fresh tree needed; see its header for `MESON` and `LLVM_CONFIG`. The original steps:
+The release bundle is the supported way to install. A fresh build has been reproduced (Ubuntu 24.04 under WSL, clang 18, Meson 1.9, LLVM 19 for Mesa's host tool) with `tools/build-all.sh`, which runs the build steps below in order and fixes what a fresh tree needed; see its header for `MESON` and `LLVM_CONFIG`. The original steps:
 
 ```sh
 python3 tools/bootstrap.py                 # pinned sources and host packages into vendor/ and .deps/
@@ -148,17 +272,18 @@ cp .env.example .env                       # then set WOW_INSTALL; console setti
 bash tools/wine-ps5/build-radv.sh          # the graphics driver with this project's patch
 bash tools/wine-ps5/build-console.sh       # Wine's Unix side, the app, and its deployment to the console
 python3 tools/wine-ps5/stage-console.py --all --system32   # Wine's Windows side to the console
-python3 tools/wine-ps5/stage-game.py       # your game to the console
+python3 tools/wine-ps5/stage-game.py       # your game to the console (WOW_FLAVOR=_classic_era_ for only that one)
 ```
 
 The host needs Linux with LLVM 23, mingw-w64, meson, ninja and cmake. `runtime/wine-ps5/README.md` describes the Wine patch; `tools/make-bundle.py` makes the release bundle from a console where everything works.
 
 ## Credits and licences
 
+- **[BeLikeBrett/WoWPS5](https://github.com/BeLikeBrett/WoWPS5)** — the original port this fork builds on: Wine in one PS5 app, the memory layer, the uncapped mode, the installer. All the hard parts.
 - [Wine](https://www.winehq.org/) (LGPL-2.1-or-later); the patch here is under the same licence.
 - [vkd3d-proton](https://github.com/HansKristian-Work/vkd3d-proton) (LGPL-2.1).
 - [Mesa](https://www.mesa3d.org/) RADV (MIT) in [Mihawk's PS5 port](https://github.com/mihawk-99/PS5_Mesa), and his [PS5_Vulkan](https://github.com/mihawk-99/PS5_Vulkan).
-- The [PS5 payload SDK](https://github.com/ps5-payload-dev/sdk).
-- The licence texts of everything the app contains are in the bundle under `title/PPSA99220/licenses/`.
+- The [PS5 payload SDK](https://github.com/ps5-payload-dev/sdk) and [klogsrv](https://github.com/ps5-payload-dev/klogsrv).
+- The licence texts of everything the app contains are in the bundle under `title/PPSA99220/licenses/`. This project's own code is [MIT](LICENSE).
 
-World of Warcraft and Blizzard Entertainment are trademarks of Blizzard Entertainment, Inc. PlayStation and PS5 are trademarks of Sony Interactive Entertainment Inc. The pictures used for the app's tile and background are fan-made from publicly available artwork.
+<sub>World of Warcraft and Blizzard Entertainment are trademarks of Blizzard Entertainment, Inc. PlayStation and PS5 are trademarks of Sony Interactive Entertainment Inc. The pictures used for the app's tile and background are fan-made from publicly available artwork.</sub>
