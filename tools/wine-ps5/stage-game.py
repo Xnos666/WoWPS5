@@ -50,8 +50,8 @@ def install_folder():
         for line in env_file.read_text(encoding='utf-8').splitlines():
             if line.strip().startswith('WOW_INSTALL='):
                 value = line.split('=', 1)[1].strip().strip('"\'')
-    if not value or not (Path(value) / '_classic_beta_').is_dir():
-        sys.exit('set WOW_INSTALL (environment or .env, see .env.example) to the folder that holds _classic_beta_ and Data')
+    if not value or not any((Path(value) / d).is_dir() for d in ('_classic_beta_', '_classic_era_')):
+        sys.exit('set WOW_INSTALL (environment or .env, see .env.example) to the folder that holds Data and _classic_beta_ or _classic_era_')
     return Path(value)
 
 
@@ -59,6 +59,10 @@ INSTALL = install_folder()
 TARGET = '/data/wowps5/prefix/dosdevices/c:/Games/World of Warcraft'
 SKIP_TOP = {'_classic_', '.battle.net', 'World of Warcraft Launcher.exe'}
 RECORD = ROOT / 'work/game-staged.json'
+# The game folders this port can run, with their programs. --flavor picks which are copied.
+FLAVORS = {'_classic_beta_': 'WowB.exe', '_classic_era_': 'WowClassic.exe'}
+# WOW_FLAVOR=_classic_era_ (environment) copies only that game folder; default: every one installed
+CHOSEN = {f for f in __import__('os').environ.get('WOW_FLAVOR', '').split(',') if f} or set(FLAVORS)
 SKIP_FLAVOR = {'WTF', 'Interface', 'Logs', 'Errors', 'Cache', 'Screenshots',
                'vkd3d-proton.cache', 'vkd3d-proton.cache.write'}
 
@@ -68,7 +72,9 @@ def wanted():
         relative = path.relative_to(INSTALL)
         if relative.parts[0] in SKIP_TOP:
             continue
-        if relative.parts[0] == '_classic_beta_' and len(relative.parts) > 1 and relative.parts[1] in SKIP_FLAVOR:
+        if relative.parts[0] in FLAVORS and relative.parts[0] not in CHOSEN:
+            continue
+        if relative.parts[0] in FLAVORS and len(relative.parts) > 1 and relative.parts[1] in SKIP_FLAVOR:
             continue
         if path.is_file() and not path.is_symlink():
             yield relative, path
