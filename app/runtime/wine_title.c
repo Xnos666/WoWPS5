@@ -621,14 +621,37 @@ static void* deadlineThread(void* argument) {
 // no run request: the game, if it is installed, with the settings it is known
 // to run with. /data/wowps5/launch.txt, when there is one, adds to or replaces
 // them (the lines of a run request: NAME=value, +argument) and stays in place.
-#define GAME_PROGRAM "/data/wowps5/prefix/dosdevices/c:/Games/World of Warcraft/_classic_beta_/WowB.exe"
+#define GAME_ROOT "/data/wowps5/prefix/dosdevices/c:/Games/World of Warcraft/"
 #define LAUNCH_SETTINGS "/data/wowps5/launch.txt"
+
+// The games the title knows, in the order it looks for them: WoW Forever, then
+// WoW Classic Era. A WOWPS5_GAME=<console path of the .exe> line in the launch
+// settings picks one explicitly.
+static const char* const knownGames[] = {
+    GAME_ROOT "_classic_beta_/WowB.exe",
+    GAME_ROOT "_classic_era_/WowClassic.exe",
+};
+static const char* gameProgram(void) {
+    static char chosen[1024];
+    char line[1024];
+    chosen[0] = 0;
+    FILE* settings = fopen(LAUNCH_SETTINGS, "r");
+    while(settings && fgets(line, sizeof(line), settings)) {
+        line[strcspn(line, "\r\n")] = 0;
+        if(!strncmp(line, "WOWPS5_GAME=", 12) && line[12]) snprintf(chosen, sizeof(chosen), "%s", line + 12);
+    }
+    if(settings) fclose(settings);
+    if(chosen[0]) return chosen;
+    for(unsigned i = 0; i < sizeof(knownGames) / sizeof(*knownGames); i++)
+        if(access(knownGames[i], R_OK) == 0) return knownGames[i];
+    return knownGames[0];
+}
 
 // A queued run of the title's own probe samples (/app0/test-run.txt, written by
 // ps5/tools/run.sh) comes before the game.
 #define PROBE_RUN "/app0/test-run.txt"
 bool wowps5WineWanted(const char* requestPath) {
-    return access(requestPath, R_OK) == 0 || (access(PROBE_RUN, R_OK) != 0 && access(GAME_PROGRAM, R_OK) == 0);
+    return access(requestPath, R_OK) == 0 || (access(PROBE_RUN, R_OK) != 0 && access(gameProgram(), R_OK) == 0);
 }
 
 // The console's splash stays over the title until the Windows program has
@@ -824,10 +847,19 @@ static void descriptorProbe(void) {
 }
 // An earlier build could put an info label into the game as an add-on of its
 // own interface. The label is gone; what it left on a console is taken away.
-#define LABEL_FOLDER "/data/wowps5/prefix/dosdevices/c:/Games/World of Warcraft/_classic_beta_/Interface/AddOns/WoWPS5Info"
-static void infoLabel(void) {
-    remove(LABEL_FOLDER "/WoWPS5Info.toc"); remove(LABEL_FOLDER "/Info.lua"); remove(LABEL_FOLDER "/WoWPS5Info.lua");
-    rmdir(LABEL_FOLDER);
+static void infoLabel(const char* program) {
+    // the debug label addon beside whichever game runs: <game folder>/Interface/AddOns/WoWPS5Info
+    char folder[1100], path[1200];
+    snprintf(folder, sizeof(folder), "%s", program);
+    char* slash = strrchr(folder, '/');
+    if(!slash) return;
+    snprintf(slash, sizeof(folder) - (size_t)(slash - folder), "/Interface/AddOns/WoWPS5Info");
+    static const char* const files[] = {"/WoWPS5Info.toc", "/Info.lua", "/WoWPS5Info.lua"};
+    for(unsigned i = 0; i < sizeof(files) / sizeof(*files); i++) {
+        snprintf(path, sizeof(path), "%s%s", folder, files[i]);
+        remove(path);
+    }
+    rmdir(folder);
 }
 
 // WOWPS5_CPU_PROBE=1: how many processors the title really gets, and how the
@@ -949,14 +981,14 @@ static void* splashThread(void* unused) {
 void wowps5WineStartIfRequested(const char* requestPath) {
     FILE* request = fopen(requestPath, "r");
     const bool requested = request != NULL;
-    if(!request && (access(PROBE_RUN, R_OK) == 0 || access(GAME_PROGRAM, R_OK) != 0)) return;
+    if(!request && (access(PROBE_RUN, R_OK) == 0 || access(gameProgram(), R_OK) != 0)) return;
     static char program[1024]; char line[1024];
     bool have = true;
     if(requested) {
         have = fgets(program, sizeof(program), request) != NULL;
         program[strcspn(program, "\r\n")] = 0;
     } else {
-        snprintf(program, sizeof(program), "%s", GAME_PROGRAM);
+        snprintf(program, sizeof(program), "%s", gameProgram());
         setenv("WINEDLLOVERRIDES", "d3d12,d3d12core,dxgi=n;winemenubuilder.exe=d", 1);
         setenv("VKD3D_CONFIG", "single_queue", 1);
         setenv("WINEDEBUG", "err+all,fixme-all", 1);
@@ -982,7 +1014,7 @@ void wowps5WineStartIfRequested(const char* requestPath) {
     if(!have || !program[0]) { fprintf(stderr, "[WoWPS5 Wine] empty run request\n"); return; }
     // A requested run is a test and always has a time limit. The game started
     // from the home screen has one only if the launch settings give it.
-    if(!requested) infoLabel();
+    if(!requested) infoLabel(program);
     heldOff = getenv("WOWPS5_WRITE_BEHIND") && !strcmp(getenv("WOWPS5_WRITE_BEHIND"), "0");
     const char* deadline = getenv("WOWPS5_DEADLINE");
     const unsigned limit = deadline && atoi(deadline) > 0 ? (unsigned)atoi(deadline) : requested ? 600 : 0;
