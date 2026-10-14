@@ -220,27 +220,19 @@ The app writes everything Wine and the game print to the console's kernel log. T
 A PS5 app cannot start a second program, has 16 KiB memory pages, may not read its own code, and gets about 250 open files. So the whole of Windows has to live inside one app:
 
 ```mermaid
-flowchart TB
+flowchart LR
     subgraph APP["PS5 app PPSA99220 · one process"]
-        direction TB
-        GAME["WowB.exe / WowClassic.exe<br/><i>your own copy, unmodified</i>"]
-        PE["Wine 11.19 · Windows side<br/>ntdll · kernel32 · user32 · ws2_32 …"]
-        D3D["vkd3d-proton<br/>Direct3D 12 → Vulkan"]
-        UNIX["Wine · Unix side<br/>linked into the app"]
-        SRV["wineserver<br/>on a thread, not a process"]
-        MEM["Memory layer<br/>4 KiB pages · real executable memory"]
-        RADV["RADV<br/>Mesa's Vulkan driver, PS5 port"]
-        IO["Controller · touchpad · on-screen keyboard · sound"]
-        GAME --> PE
-        GAME -- "D3D12" --> D3D
-        PE --> UNIX
-        UNIX <--> SRV
-        UNIX --> MEM
-        D3D -- "Vulkan" --> RADV
-        IO --> UNIX
+        GAME["WowB.exe<br/>WowClassic.exe<br/><i>your own copy</i>"]
+        PE["Wine 11.19<br/>Windows side"]
+        UNIX["Wine Unix side<br/>wineserver on a thread<br/>pad · keyboard · sound"]
+        MEM["Memory layer<br/>4 KiB pages<br/>executable memory"]
+        D3D["vkd3d-proton<br/>D3D12 → Vulkan"]
+        RADV["RADV<br/>Mesa, PS5 port"]
+        GAME --> PE --> UNIX --> MEM
+        GAME -- "D3D12" --> D3D -- "Vulkan" --> RADV
     end
+    MEM --> KERNEL[("PS5 kernel")]
     RADV --> GPU[("PS5 GPU")]
-    MEM --> KERNEL[("PS5 kernel<br/>etaHEN + kstuff")]
 ```
 
 - **One process.** Wine's server runs on a thread and its Unix side is linked into the app's executable.
